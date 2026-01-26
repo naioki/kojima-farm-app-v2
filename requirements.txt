@@ -1,5 +1,13 @@
+<<<<<<< HEAD
 streamlit
 google-generativeai
 reportlab
 Pillow
 pandas
+=======
+streamlit>=1.28.0
+google-generativeai>=0.3.0
+reportlab>=4.0.0
+Pillow>=10.0.0
+pandas>=2.0.0
+>>>>>>> 8653932 (Initial commit)
