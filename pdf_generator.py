@@ -457,14 +457,6 @@ class LabelPDFGenerator:
               stroke=1, fill=0)
         c.setDash()  # 破線をリセット
         
-        # 内側に少し余白を持たせた二重線（外側の枠の内側に描画、これも破線）
-        c.setStrokeColor(black)
-        c.setLineWidth(2)
-        c.setDash([8, 4])  # 内側の破線パターン
-        c.rect(x + 6, y + 6, self.LABEL_WIDTH - 12, self.LABEL_HEIGHT - 12, 
-              stroke=1, fill=0)
-        c.setDash()  # 破線をリセット
-        
         # 下部に太い二重線を描画
         c.setStrokeColor(black)
         c.setLineWidth(2)
