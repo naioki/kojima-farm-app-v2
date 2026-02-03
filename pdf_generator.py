@@ -75,11 +75,18 @@ class LabelPDFGenerator:
         """
         Cut and Stack形式用にラベルを再配置
         
-        元のインデックスiを、スロット番号sとページ番号pに変換:
-        - s = i % 8 (スロット番号: 0-7)
-        - p = i // 8 (ページ番号: 0から開始)
+        仕様: 各ページnにおいて、各スロットに以下のインデックスのデータを配置
+        - 左上（スロット0）: n番目
+        - 右上（スロット1）: n + P番目
+        - 左2段目（スロット2）: n + 2P番目
+        - 右2段目（スロット3）: n + 3P番目
+        - ... (同様に右下まで計8スロット)
         
-        再配置後のインデックスj = p * 8 + s の位置に、元のインデックスiのラベルを配置
+        変換式:
+        - 元のインデックスiに対して:
+          - slot = i // P (スロット番号: 0-7)
+          - page = i % P (ページ番号: 0から開始)
+        - 再配置後のインデックスj = page * 8 + slot
         
         Args:
             labels: 元のラベルリスト
@@ -89,6 +96,10 @@ class LabelPDFGenerator:
         """
         total_labels = len(labels)
         total_pages = (total_labels + self.LABELS_PER_PAGE - 1) // self.LABELS_PER_PAGE
+        
+        if total_pages == 0:
+            return []
+        
         total_slots = total_pages * self.LABELS_PER_PAGE
         
         # 再配置後のリストを初期化（空の辞書で埋める）
@@ -96,11 +107,12 @@ class LabelPDFGenerator:
         
         # 元のインデックスiを、再配置後のインデックスjに変換
         for i in range(total_labels):
-            slot = i % self.LABELS_PER_PAGE  # スロット番号 (0-7)
-            page = i // self.LABELS_PER_PAGE  # ページ番号 (0から開始)
-            # 再配置後のインデックス: ページpのスロットsの位置
+            slot = i // total_pages  # スロット番号 (0-7)
+            page = i % total_pages   # ページ番号 (0から開始)
+            # 再配置後のインデックス: ページpageのスロットslotの位置
             j = page * self.LABELS_PER_PAGE + slot
-            rearranged[j] = labels[i]
+            if j < total_slots:
+                rearranged[j] = labels[i]
         
         return rearranged
     
@@ -157,11 +169,15 @@ class LabelPDFGenerator:
                 # 再配置後のインデックス: ページpage_idxのスロットslotの位置
                 rearranged_idx = page_idx * self.LABELS_PER_PAGE + slot
                 
-                # 空のスロットはスキップ
-                if rearranged_idx >= len(rearranged_labels) or not rearranged_labels[rearranged_idx]:
+                # 空のスロットはスキップ（エラーを防ぐ）
+                if rearranged_idx >= len(rearranged_labels):
                     continue
                 
                 label = rearranged_labels[rearranged_idx]
+                
+                # 空の辞書の場合はスキップ
+                if not label or not label.get('store'):
+                    continue
                 
                 # スロット位置から列・行を取得
                 col, row = slot_to_pos[slot]
@@ -170,8 +186,24 @@ class LabelPDFGenerator:
                 x = col * self.LABEL_WIDTH
                 y = self.A4_HEIGHT - (row + 1) * self.LABEL_HEIGHT
                 
+                # 端数ラベルの判定を改善（is_fractionフラグまたはquantityが満杯でない場合）
+                is_fraction = label.get('is_fraction', False)
+                if not is_fraction:
+                    # sequenceが「X/X」形式（最後の箱）の場合も端数と判定
+                    sequence = label.get('sequence', '')
+                    if '/' in sequence:
+                        parts = sequence.split('/')
+                        if len(parts) == 2:
+                            try:
+                                current = int(parts[0])
+                                total = int(parts[1])
+                                if current == total and total > 1:
+                                    is_fraction = True
+                            except ValueError:
+                                pass
+                
                 # ラベルを描画
-                if label.get('is_fraction', False):
+                if is_fraction:
                     self._draw_fraction_label(c, x, y, label, font_name)
                 else:
                     self._draw_standard_label(c, x, y, label, font_name)
@@ -217,20 +249,21 @@ class LabelPDFGenerator:
             total_display = f"{total_quantity}{unit_label}" if total_quantity > 0 and unit_label else str(total_quantity)
             table_data.append([store, item, boxes, rem_box, total_display])
         
-        # テーブルの列幅を設定（mm単位）
-        col_widths = [50 * mm, 50 * mm, 35 * mm, 35 * mm, 40 * mm]
-        row_height = 20 * mm
+        # テーブルの列幅を設定（mm単位）- 1ページに収まるように調整
+        col_widths = [45 * mm, 50 * mm, 30 * mm, 30 * mm, 35 * mm]
+        # 行の高さを調整（1ページに収まるように）
+        row_height = 18 * mm
         
         # Tableオブジェクトを作成
         table = Table(table_data, colWidths=col_widths, repeatRows=1)
         
         # TableStyleを設定
         table_style = TableStyle([
-            # グリッド線（全体）
-            ('GRID', (0, 0), (-1, -1), 0.5, gray),
+            # グリッド線（全体）- より濃いグレーで見やすく
+            ('GRID', (0, 0), (-1, -1), 0.8, HexColor('#808080')),  # 中程度のグレー
             
             # ヘッダー行のスタイル（1行目、インデックス0）
-            ('BACKGROUND', (0, 0), (-1, 0), gray),  # 薄い灰色の背景
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D3D3D3')),  # より濃い薄い灰色の背景
             ('TEXTCOLOR', (0, 0), (-1, 0), black),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  # 中央揃え
             ('FONTNAME', (0, 0), (-1, 0), font_name),
@@ -243,7 +276,7 @@ class LabelPDFGenerator:
             ('FONTSIZE', (0, 1), (-1, -1), data_font_size),
             ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F5F5F5')]),  # 1行おきに色を変える（白と非常に薄い灰色）
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#E8E8E8')]),  # 1行おきに色を変える（白と薄い灰色、印刷でも見やすいコントラスト）
             
             # 行の高さ
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
@@ -404,14 +437,27 @@ class LabelPDFGenerator:
     
     def _draw_fraction_label(self, c: canvas.Canvas, x: float, y: float, 
                             label: Dict, font_name: str):
-        """端数ラベル（最後の1箱）を描画（4つの領域、Q4に超巨大フォント、下部に二重線）"""
-        # 太い黒の破線枠
+        """端数ラベル（最後の1箱）を描画（4つの領域、Q4に超巨大フォント、下部に二重線、！ウォーターマーク）"""
+        # 「！」ウォーターマークを背景に描画（とても薄い灰色）
+        c.saveState()
+        c.setFillColor(gray, alpha=0.08)  # 非常に薄い灰色
+        c.setFont(font_name, 120)  # 大きなフォントサイズ
+        exclamation_width = c.stringWidth('！', font_name, 120)
+        exclamation_x = x + (self.LABEL_WIDTH - exclamation_width) / 2
+        exclamation_y = y + (self.LABEL_HEIGHT - 120 * 0.7) / 2
+        c.drawString(exclamation_x, exclamation_y, '！')
+        c.restoreState()
+        
+        # 太い黒の実線枠（端数ラベルは破線ではなく実線）
         c.setStrokeColor(black)
-        c.setLineWidth(3)
-        c.setDash([10, 5])  # 破線パターン
-        c.rect(x + 2, y + 2, self.LABEL_WIDTH - 4, self.LABEL_HEIGHT - 4, 
+        c.setLineWidth(4)  # 太めの実線
+        c.rect(x + 3, y + 3, self.LABEL_WIDTH - 6, self.LABEL_HEIGHT - 6, 
               stroke=1, fill=0)
-        c.setDash()  # 破線をリセット
+        
+        # 内側に少し余白を持たせた二重線（外側の枠の内側に描画）
+        c.setLineWidth(2)
+        c.rect(x + 6, y + 6, self.LABEL_WIDTH - 12, self.LABEL_HEIGHT - 12, 
+              stroke=1, fill=0)
         
         # 下部に太い二重線を描画
         c.setStrokeColor(black)
