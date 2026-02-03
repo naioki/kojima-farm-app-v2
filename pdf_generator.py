@@ -221,16 +221,16 @@ class LabelPDFGenerator:
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.platypus import Paragraph
         
-        # フォントサイズを調整（A4一枚に収まるように）
-        title_font_size = 28
-        header_font_size = 16
-        data_font_size = 14
-        summary_title_font_size = 18
-        summary_data_font_size = 14
+        # フォントサイズを調整（A4一枚に収まりつつ視認性を最大化）
+        title_font_size = 30
+        header_font_size = 17
+        data_font_size = 15
+        summary_title_font_size = 19
+        summary_data_font_size = 15
         
-        # タイトル
+        # タイトル（上マージン最小限に）
         c.setFont(font_name, title_font_size)
-        c.drawString(15 * mm, self.A4_HEIGHT - 30 * mm, f"【出荷一覧表】 {shipment_date}")
+        c.drawString(10 * mm, self.A4_HEIGHT - 25 * mm, f"【出荷一覧表】 {shipment_date}")
         
         # テーブルデータの準備
         table_data = []
@@ -250,40 +250,40 @@ class LabelPDFGenerator:
             table_data.append([store, item, boxes, rem_box, total_display])
         
         # テーブルの列幅を設定（mm単位）- A4幅（210mm）に収まるように調整
-        # 左右マージン15mmずつ = 30mm、テーブル幅は180mm以内に収める
-        col_widths = [40 * mm, 50 * mm, 28 * mm, 28 * mm, 34 * mm]  # 合計180mm
-        # 行の高さを調整（1ページに収まるように）
-        row_height = 16 * mm
+        # 左右マージン10mmずつ = 20mm、テーブル幅は190mm以内に収める
+        col_widths = [42 * mm, 52 * mm, 30 * mm, 30 * mm, 36 * mm]  # 合計190mm
+        # 行の高さを調整（視認性を保ちつつ1ページに収まるように）
+        row_height = 17 * mm
         
         # Tableオブジェクトを作成
         table = Table(table_data, colWidths=col_widths, repeatRows=1)
         
-        # TableStyleを設定
+        # TableStyleを設定（視認性を最大化）
         table_style = TableStyle([
-            # グリッド線（全体）- より濃いグレーで見やすく
-            ('GRID', (0, 0), (-1, -1), 0.8, HexColor('#808080')),  # 中程度のグレー
+            # グリッド線（全体）- 太めの線で見やすく
+            ('GRID', (0, 0), (-1, -1), 1.0, HexColor('#666666')),  # 濃いグレーで太めの線
             
             # ヘッダー行のスタイル（1行目、インデックス0）
-            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D3D3D3')),  # より濃い薄い灰色の背景
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#C0C0C0')),  # より濃い灰色の背景で視認性向上
             ('TEXTCOLOR', (0, 0), (-1, 0), black),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  # 中央揃え
             ('FONTNAME', (0, 0), (-1, 0), font_name),
             ('FONTSIZE', (0, 0), (-1, 0), header_font_size),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            ('TOPPADDING', (0, 0), (-1, 0), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 10),
             
             # データ行のスタイル
             ('FONTNAME', (0, 1), (-1, -1), font_name),
             ('FONTSIZE', (0, 1), (-1, -1), data_font_size),
             ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#E8E8E8')]),  # 1行おきに色を変える（白と薄い灰色、印刷でも見やすいコントラスト）
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')]),  # 1行おきに色を変える（白と薄い灰色、コントラスト向上）
             
-            # 行の高さとパディング（A4一枚に収まるように調整）
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 1), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+            # 行の高さとパディング（視認性を保ちつつA4一枚に収まるように）
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 1), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 7),
         ])
         
         table.setStyle(table_style)
@@ -291,19 +291,19 @@ class LabelPDFGenerator:
         # テーブルのサイズを計算
         table_width, table_height = table.wrap(0, 0)
         
-        # テーブルを描画する位置を計算（左右マージン15mm）
-        table_x = 15 * mm
-        table_y = self.A4_HEIGHT - 60 * mm
+        # テーブルを描画する位置を計算（左右マージン10mmで視認性を最大化）
+        table_x = 10 * mm
+        table_y = self.A4_HEIGHT - 50 * mm
         
         # テーブルを描画
         table.drawOn(c, table_x, table_y - table_height)
         
         # 品目ごとの総数セクション用のY座標を更新
-        current_y = table_y - table_height - 20 * mm
+        current_y = table_y - table_height - 12 * mm
         
         # 品目ごとの総数セクションを追加
         # テーブルの下に余白を確保（A4一枚に収まるように調整）
-        summary_start_y = current_y - 15 * mm
+        summary_start_y = current_y - 10 * mm
         
         # 品目ごとに集計
         from collections import defaultdict
@@ -324,10 +324,10 @@ class LabelPDFGenerator:
         # 品目ごとの総数セクションのタイトル
         c.setFont(font_name, summary_title_font_size)
         summary_title = f"【{shipment_date} 出荷・作成総数】"
-        c.drawString(15 * mm, summary_start_y, summary_title)
+        c.drawString(10 * mm, summary_start_y, summary_title)
         
         # 品目ごとの総数を表示
-        summary_y = summary_start_y - 18 * mm
+        summary_y = summary_start_y - 16 * mm
         c.setFont(font_name, summary_data_font_size)
         
         # キーをソートして表示（品目名→規格の順）
@@ -340,17 +340,17 @@ class LabelPDFGenerator:
             else:
                 display_name = item
             summary_text = f"・{display_name}：{total}{unit_label}"
-            c.drawString(15 * mm, summary_y, summary_text)
-            summary_y -= 16 * mm  # 次の行へ
+            c.drawString(10 * mm, summary_y, summary_text)
+            summary_y -= 15 * mm  # 次の行へ
             
             # ページを超える場合は改ページ（A4一枚に収めるため、通常は発生しない）
-            if summary_y < 20 * mm:
+            if summary_y < 15 * mm:
                 c.showPage()
                 summary_y = self.A4_HEIGHT - 50 * mm
                 # タイトルを再描画
                 c.setFont(font_name, summary_title_font_size)
-                c.drawString(15 * mm, summary_y, summary_title)
-                summary_y -= 18 * mm
+                c.drawString(10 * mm, summary_y, summary_title)
+                summary_y -= 16 * mm
                 c.setFont(font_name, summary_data_font_size)
     
     def _draw_text_in_quadrant(self, c: canvas.Canvas, text: str, font_name: str, 
