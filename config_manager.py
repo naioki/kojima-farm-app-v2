@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 CONFIG_DIR = Path("config")
 STORES_FILE = CONFIG_DIR / "stores.json"
 ITEMS_FILE = CONFIG_DIR / "items.json"
+UNITS_FILE = CONFIG_DIR / "units.json"  # 入数マスター: 品目|規格|店舗 → 入数
 
 # デフォルト値
 DEFAULT_STORES = ["鎌ケ谷", "五香", "八柱", "青葉台", "咲が丘", "習志野台", "八千代台"]
@@ -140,3 +141,68 @@ def auto_learn_item(item_name: str) -> str:
     if item_name:
         add_new_item(item_name, [item_name])
     return item_name
+
+
+# ==========================================
+# 入数マスター（柔軟に編集可能、GASの入数マスターと同様の役割）
+# - 編集した入数は次回解析時に反映され、合計数量の自動計算に使用されます
+# - GASの入数マスターと同期する場合は、スプレッドシートからCSV出力して units.json に手動反映
+# ==========================================
+
+def _units_key(item: str, spec: str, store: str) -> str:
+    """入数マスター用のキー生成"""
+    def n(v):
+        return (v or "").strip().replace(" ", "")
+    return f"{n(item)}|{n(spec)}|{n(store)}"
+
+
+def load_units() -> Dict[str, int]:
+    """入数マスターを読み込む（品目|規格|店舗 → 入数）"""
+    ensure_config_dir()
+    if UNITS_FILE.exists():
+        try:
+            with open(UNITS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {k: int(v) for k, v in data.items() if v}
+                return {}
+        except Exception:
+            return {}
+    return {}
+
+
+def save_units(units: Dict[str, int]):
+    """入数マスターを保存"""
+    ensure_config_dir()
+    with open(UNITS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(units, f, ensure_ascii=False, indent=2)
+
+
+def lookup_unit(item: str, spec: str, store: str) -> int:
+    """入数マスターから入数を検索（0なら未登録）"""
+    units = load_units()
+    key = _units_key(item, spec, store)
+    return units.get(key, 0)
+
+
+def add_unit_if_new(item: str, spec: str, store: str, unit: int) -> bool:
+    """入数マスターに登録（既存なら上書きしない、新規のみ追加）"""
+    if unit <= 0:
+        return False
+    units = load_units()
+    key = _units_key(item, spec, store)
+    if key in units:
+        return False  # 既存なら追加しない（柔軟に変えたい場合は上書きも可）
+    units[key] = unit
+    save_units(units)
+    return True
+
+
+def set_unit(item: str, spec: str, store: str, unit: int) -> None:
+    """入数マスターの入数を設定（既存は上書き＝柔軟に変えられる）"""
+    if unit <= 0:
+        return
+    units = load_units()
+    key = _units_key(item, spec, store)
+    units[key] = unit
+    save_units(units)
