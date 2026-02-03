@@ -885,7 +885,7 @@ if st.session_state.parsed_data:
     df_for_compare = df.drop(columns=['合計数量'])
     edited_df_for_compare = edited_df.drop(columns=['合計数量'])
     
-        if not df_for_compare.equals(edited_df_for_compare):
+    if not df_for_compare.equals(edited_df_for_compare):
         updated_data = []
         for _, row in edited_df.iterrows():
             # 品目名の正規化
