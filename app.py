@@ -884,16 +884,11 @@ if st.session_state.parsed_data:
     # データが変更されたかチェック
     df_for_compare = df.drop(columns=['合計数量'])
     edited_df_for_compare = edited_df.drop(columns=['合計数量'])
-    
     if not df_for_compare.equals(edited_df_for_compare):
         updated_data = []
         for _, row in edited_df.iterrows():
-            # 品目名の正規化
             normalized_item = normalize_item_name(row['品目'])
-            # 店舗名の検証
             validated_store = validate_store_name(row['店舗名']) or row['店舗名']
-
-            # 規格の処理（NaNやNoneに対応）
             try:
                 spec_value = row['規格']
                 if pd.isna(spec_value) or spec_value is None:
@@ -902,12 +897,9 @@ if st.session_state.parsed_data:
                     spec_value = str(spec_value).strip()
             except (KeyError, TypeError):
                 spec_value = ''
-
             unit_val = int(row['入数(unit)'])
-            # 入数マスターに反映（編集内容を次回以降の解析に活用、柔軟に変えられる）
             if unit_val > 0:
                 set_unit(normalized_item or row['品目'], spec_value, validated_store, unit_val)
-
             updated_data.append({
                 'store': validated_store,
                 'item': normalized_item,
@@ -916,10 +908,8 @@ if st.session_state.parsed_data:
                 'boxes': int(row['箱数(boxes)']),
                 'remainder': int(row['端数(remainder)'])
             })
-
         st.session_state.parsed_data = updated_data
         st.info("✅ データを更新しました。入数マスターにも反映済み。PDFを生成する場合は下のボタンを押してください。")
-    
     st.divider()
     
     # ラベル生成
