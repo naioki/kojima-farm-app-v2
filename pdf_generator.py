@@ -7,7 +7,8 @@ from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.units import mm
-from reportlab.lib.colors import black, gray
+from reportlab.lib.colors import black, gray, white, HexColor
+from reportlab.platypus import Table, TableStyle
 from typing import List, Dict
 import os
 
@@ -184,78 +185,91 @@ class LabelPDFGenerator:
     
     def _draw_summary_page(self, c: canvas.Canvas, summary_data: List[Dict], 
                           shipment_date: str, font_name: str):
-        """出荷一覧表ページを描画"""
+        """出荷一覧表ページを描画（TableオブジェクトとTableStyleを使用）"""
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import Paragraph
+        
         # フォントサイズをさらに大きく設定
-        title_font_size = 32  # 24 → 32
-        header_font_size = 18  # 14 → 18
-        data_font_size = 16  # 14 → 16
-        summary_title_font_size = 20  # 品目ごとの総数セクションのタイトル
-        summary_data_font_size = 16  # 品目ごとの総数セクションのデータ
+        title_font_size = 32
+        header_font_size = 18
+        data_font_size = 16
+        summary_title_font_size = 20
+        summary_data_font_size = 16
         
         # タイトル
         c.setFont(font_name, title_font_size)
         c.drawString(50 * mm, self.A4_HEIGHT - 40, f"【出荷一覧表】 {shipment_date}")
         
-        # テーブルヘッダー（装飾なし）
-        y_start = self.A4_HEIGHT - 70
-        row_height = 20  # 行の高さをさらに増やす（18 → 20）
-        header_y = y_start
+        # テーブルデータの準備
+        table_data = []
+        # ヘッダー行
+        header_row = ["店舗名", "品目", "フル箱", "端数箱", "総数"]
+        table_data.append(header_row)
         
-        # ヘッダー文字（背景色なし、フォントサイズを大きく、TOTAL列を削除）
-        c.setFont(font_name, header_font_size)
-        c.drawString(20 * mm, header_y - 12, "店舗名")
-        c.drawString(70 * mm, header_y - 12, "品目")
-        c.drawString(120 * mm, header_y - 12, "フル箱")
-        c.drawString(155 * mm, header_y - 12, "端数箱")
-        c.drawString(180 * mm, header_y - 12, "総数")
-        
-        # ヘッダー下線
-        c.setStrokeColor(black)
-        c.setLineWidth(0.5)
-        c.line(18 * mm, header_y - row_height, 190 * mm, header_y - row_height)
-        
-        # テーブル内容（装飾なし）
-        current_y = header_y - row_height
+        # データ行
         for entry in summary_data:
-            current_y -= row_height
-            
-            # データ（背景色なし、フォントサイズを大きく）
-            c.setFont(font_name, data_font_size)
             store = str(entry.get('store', ''))
             item = str(entry.get('item', ''))
             boxes = str(entry.get('boxes', 0))
             rem_box = str(entry.get('rem_box', 0))
-            total_packs = str(entry.get('total_packs', 0))
             total_quantity = entry.get('total_quantity', 0)
             unit_label = entry.get('unit_label', '')
-            
-            # 総数の表示（数量 + 単位）
             total_display = f"{total_quantity}{unit_label}" if total_quantity > 0 and unit_label else str(total_quantity)
+            table_data.append([store, item, boxes, rem_box, total_display])
+        
+        # テーブルの列幅を設定（mm単位）
+        col_widths = [50 * mm, 50 * mm, 35 * mm, 35 * mm, 40 * mm]
+        row_height = 20 * mm
+        
+        # Tableオブジェクトを作成
+        table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        
+        # TableStyleを設定
+        table_style = TableStyle([
+            # グリッド線（全体）
+            ('GRID', (0, 0), (-1, -1), 0.5, gray),
             
-            c.drawString(20 * mm, current_y + 2, store)
-            c.drawString(70 * mm, current_y + 2, item)
-            c.drawString(120 * mm, current_y + 2, boxes)
-            c.drawString(155 * mm, current_y + 2, rem_box)
-            c.drawString(180 * mm, current_y + 2, total_display)
+            # ヘッダー行のスタイル（1行目、インデックス0）
+            ('BACKGROUND', (0, 0), (-1, 0), gray),  # 薄い灰色の背景
+            ('TEXTCOLOR', (0, 0), (-1, 0), black),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  # 中央揃え
+            ('FONTNAME', (0, 0), (-1, 0), font_name),
+            ('FONTSIZE', (0, 0), (-1, 0), header_font_size),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('TOPPADDING', (0, 0), (-1, 0), 12),
             
-            # ページを超える場合は改ページ
-            if current_y < 80:  # 下部に余白を確保（品目ごとの総数セクション用）
-                c.showPage()
-                current_y = self.A4_HEIGHT - 50
-                # ヘッダーを再描画
-                c.setFont(font_name, header_font_size)
-                c.drawString(20 * mm, current_y - 12, "店舗名")
-                c.drawString(70 * mm, current_y - 12, "品目")
-                c.drawString(120 * mm, current_y - 12, "フル箱")
-                c.drawString(155 * mm, current_y - 12, "端数箱")
-                c.drawString(180 * mm, current_y - 12, "総数")
-                # ヘッダー下線
-                c.line(18 * mm, current_y - row_height, 190 * mm, current_y - row_height)
-                current_y -= row_height
+            # データ行のスタイル
+            ('FONTNAME', (0, 1), (-1, -1), font_name),
+            ('FONTSIZE', (0, 1), (-1, -1), data_font_size),
+            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F5F5F5')]),  # 1行おきに色を変える（白と非常に薄い灰色）
+            
+            # 行の高さ
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+        ])
+        
+        table.setStyle(table_style)
+        
+        # テーブルのサイズを計算
+        table_width, table_height = table.wrap(0, 0)
+        
+        # テーブルを描画する位置を計算
+        table_x = 20 * mm
+        table_y = self.A4_HEIGHT - 70 * mm
+        
+        # テーブルを描画
+        table.drawOn(c, table_x, table_y - table_height)
+        
+        # 品目ごとの総数セクション用のY座標を更新
+        current_y = table_y - table_height - 30 * mm
         
         # 品目ごとの総数セクションを追加
         # テーブルの下に余白を確保
-        summary_start_y = current_y - 30
+        summary_start_y = current_y - 30 * mm
         
         # 品目ごとに集計
         from collections import defaultdict
