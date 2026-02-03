@@ -19,7 +19,8 @@ import traceback
 from config_manager import (
     load_stores, save_stores, add_store, remove_store,
     load_items, save_items, add_item_variant, add_new_item, remove_item,
-    auto_learn_store, auto_learn_item
+    auto_learn_store, auto_learn_item,
+    load_units, lookup_unit, add_unit_if_new, set_unit
 )
 from email_config_manager import load_email_config, save_email_config, detect_imap_server
 from email_reader import check_email_for_orders
@@ -134,17 +135,20 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
     """
     genai.configure(api_key=api_key)
     
-    # モデルを初期化（gemini-2.0-flashを優先）
+    # モデルを初期化（gemini-3-flash-preview を優先、利用不可時は 2.0-flash 等にフォールバック）
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash')
-    except:
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+    except Exception:
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-        except:
+            model = genai.GenerativeModel('gemini-2.0-flash')
+        except Exception:
             try:
-                model = genai.GenerativeModel('gemini-1.5-pro')
-            except:
-                model = genai.GenerativeModel('gemini-pro-vision')
+                model = genai.GenerativeModel('gemini-1.5-flash')
+            except Exception:
+                try:
+                    model = genai.GenerativeModel('gemini-1.5-pro')
+                except Exception:
+                    model = genai.GenerativeModel('gemini-pro-vision')
     
     # 店舗名・品目名リストを取得
     known_stores = get_known_stores()
@@ -276,7 +280,14 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
         unit = safe_int(entry.get('unit', 0))
         boxes = safe_int(entry.get('boxes', 0))
         remainder = safe_int(entry.get('remainder', 0))
-        
+
+        # 入数が0の場合、入数マスターから補完（柔軟に変えられる仕組み）
+        if unit <= 0:
+            spec_for_lookup = (entry.get('spec') or '').strip() if entry.get('spec') is not None else ''
+            looked_up = lookup_unit(normalized_item or item, spec_for_lookup, validated_store or store)
+            if looked_up > 0:
+                unit = looked_up
+
         # 数量が0の場合は警告
         if unit == 0 and boxes == 0 and remainder == 0:
             errors.append(f"行{i+1}: 数量が全て0です（店舗: {store}, 品目: {item}）")
@@ -288,6 +299,10 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
         else:
             spec_value = str(spec_value).strip()
         
+        # 入数が取得できた場合、入数マスターに自動登録（新規のみ、重複はスキップ）
+        if unit > 0:
+            add_unit_if_new(normalized_item or item, spec_value, validated_store or store, unit)
+
         validated_entry = {
             'store': validated_store or store,
             'item': normalized_item or item,
@@ -870,14 +885,14 @@ if st.session_state.parsed_data:
     df_for_compare = df.drop(columns=['合計数量'])
     edited_df_for_compare = edited_df.drop(columns=['合計数量'])
     
-    if not df_for_compare.equals(edited_df_for_compare):
+        if not df_for_compare.equals(edited_df_for_compare):
         updated_data = []
         for _, row in edited_df.iterrows():
             # 品目名の正規化
             normalized_item = normalize_item_name(row['品目'])
             # 店舗名の検証
             validated_store = validate_store_name(row['店舗名']) or row['店舗名']
-            
+
             # 規格の処理（NaNやNoneに対応）
             try:
                 spec_value = row['規格']
@@ -887,18 +902,23 @@ if st.session_state.parsed_data:
                     spec_value = str(spec_value).strip()
             except (KeyError, TypeError):
                 spec_value = ''
-            
+
+            unit_val = int(row['入数(unit)'])
+            # 入数マスターに反映（編集内容を次回以降の解析に活用、柔軟に変えられる）
+            if unit_val > 0:
+                set_unit(normalized_item or row['品目'], spec_value, validated_store, unit_val)
+
             updated_data.append({
                 'store': validated_store,
                 'item': normalized_item,
                 'spec': spec_value,
-                'unit': int(row['入数(unit)']),
+                'unit': unit_val,
                 'boxes': int(row['箱数(boxes)']),
                 'remainder': int(row['端数(remainder)'])
             })
-        
+
         st.session_state.parsed_data = updated_data
-        st.info("✅ データを更新しました。PDFを生成する場合は下のボタンを押してください。")
+        st.info("✅ データを更新しました。入数マスターにも反映済み。PDFを生成する場合は下のボタンを押してください。")
     
     st.divider()
     
