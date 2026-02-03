@@ -70,10 +70,44 @@ class LabelPDFGenerator:
         """使用するフォント名を返す"""
         return 'IPAGothic' if self.font_available else 'Helvetica'
     
+    def _rearrange_labels_for_cut_and_stack(self, labels: List[Dict]) -> List[Dict]:
+        """
+        Cut and Stack形式用にラベルを再配置
+        
+        元のインデックスiを、スロット番号sとページ番号pに変換:
+        - s = i % 8 (スロット番号: 0-7)
+        - p = i // 8 (ページ番号: 0から開始)
+        
+        再配置後のインデックスj = p * 8 + s の位置に、元のインデックスiのラベルを配置
+        
+        Args:
+            labels: 元のラベルリスト
+            
+        Returns:
+            再配置されたラベルリスト（空のスロットは空の辞書で埋める）
+        """
+        total_labels = len(labels)
+        total_pages = (total_labels + self.LABELS_PER_PAGE - 1) // self.LABELS_PER_PAGE
+        total_slots = total_pages * self.LABELS_PER_PAGE
+        
+        # 再配置後のリストを初期化（空の辞書で埋める）
+        rearranged = [{}] * total_slots
+        
+        # 元のインデックスiを、再配置後のインデックスjに変換
+        for i in range(total_labels):
+            slot = i % self.LABELS_PER_PAGE  # スロット番号 (0-7)
+            page = i // self.LABELS_PER_PAGE  # ページ番号 (0から開始)
+            # 再配置後のインデックス: ページpのスロットsの位置
+            j = page * self.LABELS_PER_PAGE + slot
+            rearranged[j] = labels[i]
+        
+        return rearranged
+    
     def generate_pdf(self, labels: List[Dict], summary_data: List[Dict], 
                     shipment_date: str, output_path: str):
         """
         PDFを生成（複数ページ対応 + 出荷一覧表）
+        Cut and Stack形式: 裁断後に重ねるだけで順番が揃う
         
         Args:
             labels: ラベル情報のリスト（全ラベル）
@@ -95,24 +129,43 @@ class LabelPDFGenerator:
         # 出荷一覧表の後に改ページ（ラベルページと分離）
         c.showPage()
         
-        # 2ページ目以降：ラベル
+        # Cut and Stack形式に再配置
+        rearranged_labels = self._rearrange_labels_for_cut_and_stack(labels)
         total_labels = len(labels)
         total_pages = (total_labels + self.LABELS_PER_PAGE - 1) // self.LABELS_PER_PAGE
         
+        # スロット順序: 左上(0) → 右上(1) → 左2段目(2) → 右2段目(3) → ... → 右4段目(7)
+        slot_to_pos = [
+            (0, 0),  # スロット0: 左上
+            (1, 0),  # スロット1: 右上
+            (0, 1),  # スロット2: 左2段目
+            (1, 1),  # スロット3: 右2段目
+            (0, 2),  # スロット4: 左3段目
+            (1, 2),  # スロット5: 右3段目
+            (0, 3),  # スロット6: 左4段目
+            (1, 3),  # スロット7: 右4段目
+        ]
+        
+        # 各ページを描画
         for page_idx in range(total_pages):
             if page_idx > 0:  # 2ページ目以降は改ページ
                 c.showPage()
             
-            start_idx = page_idx * self.LABELS_PER_PAGE
-            end_idx = min(start_idx + self.LABELS_PER_PAGE, total_labels)
-            page_labels = labels[start_idx:end_idx]
-            
-            # このページのラベルを描画
-            for idx, label in enumerate(page_labels):
-                label_idx = start_idx + idx
-                col = label_idx % 2  # 列（0 or 1）
-                row = (label_idx % self.LABELS_PER_PAGE) // 2  # 段（0-3）
+            # このページの各スロットを描画
+            for slot in range(self.LABELS_PER_PAGE):
+                # 再配置後のインデックス: ページpage_idxのスロットslotの位置
+                rearranged_idx = page_idx * self.LABELS_PER_PAGE + slot
                 
+                # 空のスロットはスキップ
+                if rearranged_idx >= len(rearranged_labels) or not rearranged_labels[rearranged_idx]:
+                    continue
+                
+                label = rearranged_labels[rearranged_idx]
+                
+                # スロット位置から列・行を取得
+                col, row = slot_to_pos[slot]
+                
+                # 座標計算
                 x = col * self.LABEL_WIDTH
                 y = self.A4_HEIGHT - (row + 1) * self.LABEL_HEIGHT
                 
@@ -122,8 +175,10 @@ class LabelPDFGenerator:
                 else:
                     self._draw_standard_label(c, x, y, label, font_name)
                 
-                # 切断用ガイド線
-                self._draw_guide_lines(c, x, y, col, row, label_idx, total_labels)
+                # 切断用ガイド線（再配置後のインデックスを使用）
+                # 最後のラベルかどうかは、再配置後のインデックスとtotal_labelsで判定
+                is_last_label = (rearranged_idx >= total_labels - 1)
+                self._draw_guide_lines(c, x, y, col, row, rearranged_idx, total_labels, is_last_label)
         
         c.save()
     
@@ -411,19 +466,19 @@ class LabelPDFGenerator:
             c.drawString(x + 5, y + 5, shipment_date)
     
     def _draw_guide_lines(self, c: canvas.Canvas, x: float, y: float, 
-                         col: int, row: int, label_idx: int, total_labels: int):
+                         col: int, row: int, label_idx: int, total_labels: int, is_last_label: bool = False):
         """切断用ガイド線を描画（極めて薄いグレー、間隔の広い破線）"""
         c.setStrokeColor(gray, alpha=0.15)  # 極めて薄いグレー
         c.setLineWidth(0.3)
         c.setDash([20, 10])  # 間隔の広い破線
         
-        # 右側の縦線（最後の列以外、かつ最後のラベルでない場合）
-        if col == 0 and label_idx < total_labels - 1:
+        # 右側の縦線（左列で、最後のラベルでない場合）
+        if col == 0 and not is_last_label:
             c.line(x + self.LABEL_WIDTH, y, 
                   x + self.LABEL_WIDTH, y + self.LABEL_HEIGHT)
         
-        # 下側の横線（最後の段以外、かつ最後のラベルでない場合）
-        if row < 3 and label_idx < total_labels - 1:
+        # 下側の横線（最下段でない場合）
+        if row < 3:
             c.line(x, y, x + self.LABEL_WIDTH, y)
         
         c.setDash()  # 破線をリセット
