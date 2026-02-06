@@ -20,7 +20,9 @@ from config_manager import (
     load_stores, save_stores, add_store, remove_store,
     load_items, save_items, add_item_variant, add_new_item, remove_item,
     auto_learn_store, auto_learn_item,
-    load_units, lookup_unit, add_unit_if_new, set_unit
+    load_units, lookup_unit, add_unit_if_new, set_unit, initialize_default_units,
+    load_item_settings, save_item_settings, get_item_setting, set_item_setting, remove_item_setting,
+    DEFAULT_ITEM_SETTINGS
 )
 from email_config_manager import load_email_config, save_email_config, detect_imap_server
 from email_reader import check_email_for_orders
@@ -62,6 +64,21 @@ if 'email_config' not in st.session_state:
     st.session_state.email_config = load_email_config(secrets_obj)
 if 'email_password' not in st.session_state:
     st.session_state.email_password = ""
+
+# デフォルト入数の初期化（初回起動時のみ）
+if 'default_units_initialized' not in st.session_state:
+    initialize_default_units()
+    # 品目設定のデフォルト値も初期化
+    item_settings = load_item_settings()
+    # 長ねぎ・長ねぎバラが確実に50本に設定されているか確認
+    for key in ["長ネギ", "長ねぎバラ", "長ネギバラ"]:
+        if key in item_settings:
+            if item_settings[key].get("default_unit") != 50 or item_settings[key].get("unit_type") != "本":
+                set_item_setting(key, 50, "本")
+    if not item_settings:
+        # デフォルト設定を保存
+        save_item_settings(DEFAULT_ITEM_SETTINGS)
+    st.session_state.default_units_initialized = True
 
 
 def safe_int(v):
@@ -135,9 +152,9 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
     """
     genai.configure(api_key=api_key)
     
-    # モデルを初期化（gemini-3-flash-preview を優先、利用不可時は 2.0-flash 等にフォールバック）
+    # モデルを初期化（gemini-2.5-flash を優先、利用不可時は 2.0-flash 等にフォールバック）
     try:
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel('gemini-2.5-flash')
     except Exception:
         try:
             model = genai.GenerativeModel('gemini-2.0-flash')
@@ -175,12 +192,13 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
 4. 「胡瓜バラ」と「胡瓜3本」は別の規格として扱ってください
 5. unit, boxes, remainderには「数字のみ」を入れてください
 
-【計算ルール】
-- 胡瓜(3本P): 30本/箱 → unit=30
-- 胡瓜(バラ): 100本/箱（50本以上なら50本箱1、未満はバラ）→ unit=100
-- 春菊: 30袋/箱 → unit=30
-- 青梗菜: 20袋/箱 → unit=20
-- 長ネギ(2本P): 30本/箱 → unit=30
+【計算ルール（1コンテナあたりの入数）】
+- 胡瓜（袋）: 30袋/コンテナ → unit=30
+- 胡瓜バラ: 100本/コンテナ → unit=100
+- 長ねぎ: 50本/コンテナ → unit=50
+- 長ねぎバラ: 50本/コンテナ → unit=50
+- 春菊: 30袋/コンテナ → unit=30
+- 青梗菜: 20袋/コンテナ → unit=20
 
 【最重要：総数（パック数）の表記について】
 - 「×数字」の表記（例：「×180」「×100」「×50」）は「総数（パック数）」を意味します
@@ -191,14 +209,15 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
 - 総数がunitで割り切れない場合：boxes = 総数 ÷ unit（切り捨て）, remainder = 総数 - (unit × boxes)
 
 【数量計算の例（重要：×数字は総数を意味する）】
-- 「胡瓜3本×180」→ 総数180パック = unit=30の場合、boxes=6, remainder=0 (180÷30=6箱)
-- 「胡瓜3本×100」→ 総数100パック = unit=30の場合、boxes=3, remainder=10 (100÷30=3箱余り10)
-- 「胡瓜3本×60」→ 総数60パック = unit=30の場合、boxes=2, remainder=0 (60÷30=2箱)
-- 「胡瓜3本×30」→ 総数30パック = unit=30の場合、boxes=1, remainder=0 (30÷30=1箱)
-- 「胡瓜3本×20」→ 総数20パック = unit=30の場合、boxes=0, remainder=20 (20<30なので端数のみ)
-- 「春菊×50」→ 総数50パック = unit=30の場合、boxes=1, remainder=20 (50÷30=1箱余り20)
-- 「ネギ2本×80」→ 総数80パック = unit=30の場合、boxes=2, remainder=20 (80÷30=2箱余り20)
-- 「胡瓜バラ100×7 / 50×1」→ これは特殊な表記：100本/箱×7箱 + 端数50本 = unit=100, boxes=7, remainder=50
+- 「胡瓜（袋）×180」→ 総数180袋 = unit=30の場合、boxes=6, remainder=0 (180÷30=6コンテナ)
+- 「胡瓜（袋）×100」→ 総数100袋 = unit=30の場合、boxes=3, remainder=10 (100÷30=3コンテナ余り10袋)
+- 「胡瓜バラ×700」→ 総数700本 = unit=100の場合、boxes=7, remainder=0 (700÷100=7コンテナ)
+- 「胡瓜バラ×150」→ 総数150本 = unit=100の場合、boxes=1, remainder=50 (150÷100=1コンテナ余り50本)
+- 「長ねぎ×150」→ 総数150本 = unit=50の場合、boxes=3, remainder=0 (150÷50=3コンテナ)
+- 「長ねぎバラ×200」→ 総数200本 = unit=50の場合、boxes=4, remainder=0 (200÷50=4コンテナ)
+- 「長ねぎバラ×120」→ 総数120本 = unit=50の場合、boxes=2, remainder=20 (120÷50=2コンテナ余り20本)
+- 「春菊×50」→ 総数50袋 = unit=30の場合、boxes=1, remainder=20 (50÷30=1コンテナ余り20袋)
+- 「青梗菜×40」→ 総数40袋 = unit=20の場合、boxes=2, remainder=0 (40÷20=2コンテナ)
 
 【出力JSON形式】
 [{{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}}]
@@ -287,6 +306,12 @@ def validate_and_fix_order_data(order_data, auto_learn=True):
             looked_up = lookup_unit(normalized_item or item, spec_for_lookup, validated_store or store)
             if looked_up > 0:
                 unit = looked_up
+            else:
+                # 入数マスターにもない場合、品目設定のデフォルト入数を使用
+                item_setting = get_item_setting(normalized_item or item)
+                default_unit = item_setting.get("default_unit", 0)
+                if default_unit > 0:
+                    unit = default_unit
 
         # 数量が0の場合は警告
         if unit == 0 and boxes == 0 and remainder == 0:
@@ -341,7 +366,8 @@ def generate_labels_from_data(order_data: list, shipment_date: str) -> list:
         ラベル情報のリスト
     """
     labels = []
-    shipment_date_display = datetime.strptime(shipment_date, '%Y-%m-%d').strftime('%m月%d日')
+    dt = datetime.strptime(shipment_date, '%Y-%m-%d')
+    shipment_date_display = f"{dt.month}/{dt.day}"  # ゼロ埋めなし（例: 2/7）
     
     for entry in order_data:
         store = entry.get('store', '')
@@ -354,17 +380,8 @@ def generate_labels_from_data(order_data: list, shipment_date: str) -> list:
         if unit == 0:
             continue
         
-        # 単位を判定（パックと袋は「袋」に統一）
-        unit_label = '本'
-        if '春菊' in item or '青梗菜' in item or 'チンゲン菜' in item:
-            unit_label = '袋'
-        elif 'ネギ' in item or 'ねぎ' in item:
-            unit_label = '袋'  # パックから袋に統一
-        elif '胡瓜' in item or 'きゅうり' in item:
-            if 'バラ' in spec or 'ばら' in spec:
-                unit_label = '本'
-            else:
-                unit_label = '袋'  # パックから袋に統一
+        # 単位を判定（get_unit_label_for_item関数を使用）
+        unit_label = get_unit_label_for_item(item, spec)
         
         # 通常箱のラベル
         total_boxes = boxes + (1 if remainder > 0 else 0)
@@ -402,7 +419,7 @@ def generate_labels_from_data(order_data: list, shipment_date: str) -> list:
 
 def get_unit_label_for_item(item: str, spec: str) -> str:
     """
-    品目名と規格から単位を判定
+    品目名と規格から単位を判定（品目設定を優先）
     
     Args:
         item: 品目名
@@ -411,20 +428,39 @@ def get_unit_label_for_item(item: str, spec: str) -> str:
     Returns:
         単位（'本'、'袋'など）
     """
+    # まず品目設定から取得を試みる
+    setting = get_item_setting(item)
+    if setting.get("unit_type"):
+        return setting["unit_type"]
+    
+    # 品目設定がない場合、従来のロジックで判定
     item_lower = item.lower() if item else ""
     spec_lower = spec.lower() if spec else ""
     
-    # 単位を判定（パックと袋は「袋」に統一）
-    unit_label = '本'
-    if '春菊' in item or '青梗菜' in item or 'チンゲン菜' in item:
+    # 単位を判定（品目名と規格から判定）
+    unit_label = '本'  # デフォルト
+    
+    # 長ねぎバラの判定（品目名に「バラ」が含まれる場合）
+    if '長ねぎバラ' in item or '長ネギバラ' in item or 'ネギバラ' in item or 'ねぎバラ' in item or '長ねぎばら' in item:
+        unit_label = '本'
+    # 長ねぎ（袋）の判定
+    elif ('ネギ' in item or 'ねぎ' in item) and 'バラ' not in item and 'ばら' not in item:
         unit_label = '袋'
-    elif 'ネギ' in item or 'ねぎ' in item:
-        unit_label = '袋'  # パックから袋に統一
-    elif '胡瓜' in item or 'きゅうり' in item:
-        if 'バラ' in spec or 'ばら' in spec_lower:
+    # 胡瓜バラの判定（品目名に「バラ」が含まれる場合）
+    elif '胡瓜バラ' in item or 'きゅうりバラ' in item or 'キュウリバラ' in item or '胡瓜ばら' in item:
+        unit_label = '本'
+    # 胡瓜（袋）の判定
+    elif ('胡瓜' in item or 'きゅうり' in item) and 'バラ' not in item and 'ばら' not in item:
+        unit_label = '袋'
+    # 規格で判定（後方互換性のため）
+    elif 'バラ' in spec or 'ばら' in spec_lower:
+        if '胡瓜' in item or 'きゅうり' in item:
             unit_label = '本'
-        else:
-            unit_label = '袋'  # パックから袋に統一
+        elif 'ネギ' in item or 'ねぎ' in item:
+            unit_label = '本'
+    # その他の品目
+    elif '春菊' in item or '青梗菜' in item or 'チンゲン菜' in item:
+        unit_label = '袋'
     
     return unit_label
 
@@ -798,24 +834,67 @@ with tab3:
     # 品目名管理
     st.subheader("🥬 品目名管理")
     items = load_items()
+    item_settings = load_item_settings()
     
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        new_item = st.text_input("新しい品目名を追加", placeholder="例: 新野菜", key="new_item_input")
-    with col2:
-        if st.button("追加", key="add_item"):
-            if new_item and new_item.strip():
-                if add_new_item(new_item.strip()):
-                    st.success(f"✅ 「{new_item.strip()}」を追加しました")
-                    st.rerun()
-                else:
-                    st.warning("既に存在する品目名です")
+    # 新しい品目を追加（入数・単位を縦並びで確実に表示）
+    st.write("**新しい品目を追加**")
+    st.caption("💡 品目名、1コンテナあたりの入数、単位を入力して「追加」ボタンを押してください")
     
-    # 品目名一覧（編集・削除可能）
+    new_item = st.text_input("品目名", placeholder="例: 新野菜", key="new_item_input", help="新しい品目の名前を入力してください")
+    
+    row1 = st.columns(2)
+    with row1[0]:
+        new_item_unit = st.number_input("1コンテナあたりの入数", min_value=1, value=30, step=1, key="new_item_unit_input", help="1コンテナに何個（袋/本）入るかを入力")
+    with row1[1]:
+        new_item_unit_type = st.selectbox("単位", ["袋", "本"], key="new_item_unit_type_input", help="単位を選択（袋 or 本）")
+    
+    if st.button("追加", key="add_item", type="primary"):
+        if new_item and new_item.strip():
+            item_name = new_item.strip()
+            if add_new_item(item_name):
+                set_item_setting(item_name, int(new_item_unit), new_item_unit_type)
+                st.session_state[f"item_expanded_{item_name}"] = True
+                st.success(f"✅ 「{item_name}」を追加しました（入数: {new_item_unit}{new_item_unit_type}/コンテナ）")
+                st.rerun()
+            else:
+                st.warning("既に存在する品目名です")
+        else:
+            st.warning("品目名を入力してください")
+    
+    st.divider()
+    
+    # 登録済み品目名一覧（編集・削除可能）
     if items:
-        st.write("**登録済み品目名:**")
+        st.write("**登録済み品目名**（各品目の **1コンテナあたりの入数** と **単位** は、下の▼をクリックして開き、中で確認・編集できます）")
         for normalized, variants in items.items():
-            with st.expander(f"📦 {normalized} (バリアント: {', '.join(variants)})"):
+            # 品目設定を取得
+            setting = get_item_setting(normalized)
+            default_unit = setting.get("default_unit", 0)
+            unit_type = setting.get("unit_type", "袋")
+            
+            # 設定情報を表示（エクスパンダー題でそのまま表示されるようプレーン文字列）
+            if default_unit > 0:
+                setting_info = f"入数: {default_unit}{unit_type}/コンテナ"
+            else:
+                setting_info = "入数: 未設定"
+            
+            # バリアント表示を短縮（長すぎる場合）
+            variants_display = ', '.join(variants[:3])
+            if len(variants) > 3:
+                variants_display += f" ... (+{len(variants)-3}件)"
+            
+            # エクスパンダーのタイトルに品目名・入数・単位・バリアントを表示
+            expander_title = f"📦 {normalized} ｜ {setting_info} ｜ バリアント: {variants_display}"
+            
+            # 新規追加された品目はデフォルトで展開（セッション状態で管理）
+            expanded_key = f"item_expanded_{normalized}"
+            if expanded_key not in st.session_state:
+                st.session_state[expanded_key] = False
+            
+            # エクスパンダーを使用（expandedパラメータで展開状態を制御）
+            with st.expander(expander_title, expanded=st.session_state.get(expanded_key, False)):
+                # バリアント追加
+                st.write("**表記バリアントの追加**")
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     new_variant = st.text_input(f"「{normalized}」の新しい表記を追加", key=f"variant_{normalized}", placeholder="例: 別表記")
@@ -826,8 +905,38 @@ with tab3:
                             st.success(f"✅ 「{new_variant.strip()}」を追加しました")
                             st.rerun()
                 
-                if st.button("削除", key=f"del_item_{normalized}"):
+                st.divider()
+                
+                # 入数・単位の設定
+                st.write("**1コンテナあたりの入数と単位の設定**")
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    edit_unit = st.number_input(
+                        "1コンテナあたりの入数",
+                        min_value=1,
+                        value=default_unit if default_unit > 0 else 30,
+                        step=1,
+                        key=f"edit_unit_{normalized}"
+                    )
+                with col2:
+                    edit_unit_type = st.selectbox(
+                        "単位",
+                        ["袋", "本"],
+                        index=0 if unit_type == "袋" else 1,
+                        key=f"edit_unit_type_{normalized}"
+                    )
+                with col3:
+                    if st.button("保存", key=f"save_setting_{normalized}", use_container_width=True):
+                        set_item_setting(normalized, int(edit_unit), edit_unit_type)
+                        st.success(f"✅ 「{normalized}」の設定を保存しました（{edit_unit}{edit_unit_type}/コンテナ）")
+                        st.rerun()
+                
+                st.divider()
+                
+                # 品目削除
+                if st.button("🗑️ この品目を削除", key=f"del_item_{normalized}", type="secondary"):
                     if remove_item(normalized):
+                        remove_item_setting(normalized)
                         st.success(f"✅ 「{normalized}」を削除しました")
                         st.rerun()
 
@@ -843,6 +952,16 @@ if st.session_state.parsed_data:
         unit = safe_int(entry.get('unit', 0))
         boxes = safe_int(entry.get('boxes', 0))
         remainder = safe_int(entry.get('remainder', 0))
+        
+        # 入数が0の場合、品目設定のデフォルト入数を使用（表示用）
+        if unit == 0:
+            item_name = entry.get('item', '')
+            normalized_item = normalize_item_name(item_name)
+            item_setting = get_item_setting(normalized_item or item_name)
+            default_unit = item_setting.get("default_unit", 0)
+            if default_unit > 0:
+                unit = default_unit  # 表示用にデフォルト値を設定
+        
         total_quantity = (unit * boxes) + remainder
         
         df_data.append({

@@ -11,14 +11,17 @@ CONFIG_DIR = Path("config")
 STORES_FILE = CONFIG_DIR / "stores.json"
 ITEMS_FILE = CONFIG_DIR / "items.json"
 UNITS_FILE = CONFIG_DIR / "units.json"  # 入数マスター: 品目|規格|店舗 → 入数
+ITEM_SETTINGS_FILE = CONFIG_DIR / "item_settings.json"  # 品目設定: 品目 → {default_unit, unit_type}
 
 # デフォルト値
 DEFAULT_STORES = ["鎌ケ谷", "五香", "八柱", "青葉台", "咲が丘", "習志野台", "八千代台"]
 
 DEFAULT_ITEMS = {
     "青梗菜": ["青梗菜", "チンゲン菜", "ちんげん菜", "チンゲンサイ", "ちんげんさい"],
-    "胡瓜": ["胡瓜", "きゅうり", "キュウリ"],
-    "長ネギ": ["長ネギ", "ネギ", "ねぎ", "長ねぎ"],
+    "胡瓜": ["胡瓜", "きゅうり", "キュウリ", "胡瓜（袋）"],
+    "胡瓜バラ": ["胡瓜バラ", "きゅうりバラ", "キュウリバラ", "胡瓜ばら"],
+    "長ネギ": ["長ネギ", "ネギ", "ねぎ", "長ねぎ", "長ねぎ（袋）"],
+    "長ねぎバラ": ["長ねぎバラ", "長ネギバラ", "ネギバラ", "ねぎバラ", "長ねぎばら"],
     "春菊": ["春菊", "しゅんぎく", "シュンギク"]
 }
 
@@ -206,3 +209,107 @@ def set_unit(item: str, spec: str, store: str, unit: int) -> None:
     key = _units_key(item, spec, store)
     units[key] = unit
     save_units(units)
+
+
+def initialize_default_units():
+    """デフォルト入数を初期化（全店舗共通のデフォルト値）"""
+    units = load_units()
+    updated = False
+    
+    # デフォルト入数の定義（品目|規格 → 入数）
+    default_unit_map = {
+        ("胡瓜", ""): 30,  # 胡瓜（袋）: 30袋/コンテナ
+        ("胡瓜バラ", ""): 100,  # 胡瓜バラ: 100本/コンテナ
+        ("長ネギ", ""): 50,  # 長ねぎ: 50本/コンテナ
+        ("長ねぎバラ", ""): 50,  # 長ねぎバラ: 50本/コンテナ
+        ("春菊", ""): 30,  # 春菊: 30袋/コンテナ
+        ("青梗菜", ""): 20,  # 青梗菜: 20袋/コンテナ
+    }
+    
+    # 全店舗にデフォルト値を設定（既存の値がある場合は上書きしない）
+    stores = load_stores()
+    for (item, spec), unit in default_unit_map.items():
+        for store in stores:
+            key = _units_key(item, spec, store)
+            if key not in units:  # 既存の値がない場合のみ設定
+                units[key] = unit
+                updated = True
+    
+    if updated:
+        save_units(units)
+
+
+# ==========================================
+# 品目設定管理（1コンテナあたりの入数と単位）
+# ==========================================
+
+DEFAULT_ITEM_SETTINGS = {
+    "胡瓜": {"default_unit": 30, "unit_type": "袋"},
+    "胡瓜バラ": {"default_unit": 100, "unit_type": "本"},
+    "長ネギ": {"default_unit": 50, "unit_type": "本"},
+    "長ねぎバラ": {"default_unit": 50, "unit_type": "本"},
+    "春菊": {"default_unit": 30, "unit_type": "袋"},
+    "青梗菜": {"default_unit": 20, "unit_type": "袋"},
+}
+
+def load_item_settings() -> Dict[str, Dict[str, any]]:
+    """品目設定を読み込む（品目 → {default_unit, unit_type}）"""
+    ensure_config_dir()
+    if ITEM_SETTINGS_FILE.exists():
+        try:
+            with open(ITEM_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    # 既存の設定にデフォルト値をマージ（存在しない品目を追加）
+                    merged = DEFAULT_ITEM_SETTINGS.copy()
+                    merged.update(data)
+                    # 長ねぎ・長ねぎバラの設定を確実に50本に設定（複数の表記に対応）
+                    for key in ["長ネギ", "長ねぎバラ", "長ネギバラ"]:
+                        if key in merged:
+                            merged[key] = {"default_unit": 50, "unit_type": "本"}
+                    # マージした結果を保存（デフォルト値が確実に含まれる）
+                    save_item_settings(merged)
+                    return merged
+                return DEFAULT_ITEM_SETTINGS.copy()
+        except Exception:
+            # エラー時はデフォルト値を保存して返す
+            save_item_settings(DEFAULT_ITEM_SETTINGS)
+            return DEFAULT_ITEM_SETTINGS.copy()
+    else:
+        # デフォルト値を保存
+        save_item_settings(DEFAULT_ITEM_SETTINGS)
+        return DEFAULT_ITEM_SETTINGS.copy()
+
+
+def save_item_settings(settings: Dict[str, Dict[str, any]]):
+    """品目設定を保存"""
+    ensure_config_dir()
+    with open(ITEM_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+def get_item_setting(item: str) -> Dict[str, any]:
+    """品目の設定を取得（デフォルト値あり）"""
+    settings = load_item_settings()
+    if item in settings:
+        return settings[item]
+    # デフォルト値を返す
+    return {"default_unit": 0, "unit_type": "袋"}
+
+
+def set_item_setting(item: str, default_unit: int, unit_type: str):
+    """品目の設定を設定・更新"""
+    settings = load_item_settings()
+    settings[item] = {
+        "default_unit": default_unit,
+        "unit_type": unit_type
+    }
+    save_item_settings(settings)
+
+
+def remove_item_setting(item: str):
+    """品目の設定を削除"""
+    settings = load_item_settings()
+    if item in settings:
+        del settings[item]
+        save_item_settings(settings)

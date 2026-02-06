@@ -131,10 +131,10 @@ class LabelPDFGenerator:
         c = canvas.Canvas(output_path, pagesize=(self.A4_WIDTH, self.A4_HEIGHT))
         font_name = self._get_font_name()
         
-        # 出荷日を表示用に変換
+        # 出荷日を表示用に変換（月/日、ゼロ埋めなし 例: 2/7）
         from datetime import datetime
         shipment_date_obj = datetime.strptime(shipment_date, '%Y-%m-%d')
-        shipment_date_display = shipment_date_obj.strftime('%m/%d')
+        shipment_date_display = f"{shipment_date_obj.month}/{shipment_date_obj.day}"
         
         # 1ページ目：出荷一覧表
         self._draw_summary_page(c, summary_data, shipment_date_display, font_name)
@@ -326,32 +326,44 @@ class LabelPDFGenerator:
         summary_title = f"【{shipment_date} 出荷・作成総数】"
         c.drawString(10 * mm, summary_start_y, summary_title)
         
-        # 品目ごとの総数を表示
-        summary_y = summary_start_y - 14 * mm
+        # 品目ごとの総数を2列で表示（左半分・右半分に分割）
+        summary_y_base = summary_start_y - 14 * mm
+        row_height = 13 * mm  # 1行あたりの高さ
+        left_x = 10 * mm
+        right_x = self.A4_WIDTH / 2 + 12 * mm  # 右列は用紙中央 + 余白
+        
         c.setFont(font_name, summary_data_font_size)
         
-        # キーをソートして表示（品目名→規格の順）
+        # キーをソート（品目名→規格の順）
         sorted_items = sorted(item_totals.items(), key=lambda x: (x[0][0], x[0][1]))
-        for (item, spec), total in sorted_items:
+        n = len(sorted_items)
+        mid = (n + 1) // 2  # 左列に1つ多くする場合: 0〜mid-1 が左、mid〜n-1 が右
+        left_items = sorted_items[:mid]
+        right_items = sorted_items[mid:]
+        
+        # 左列を描画
+        left_y = summary_y_base
+        for (item, spec), total in left_items:
             unit_label = item_units.get((item, spec), '')
-            # 表示形式: 品目名(規格)：数量単位
             if spec:
                 display_name = f"{item}({spec})"
             else:
                 display_name = item
             summary_text = f"・{display_name}：{total}{unit_label}"
-            c.drawString(10 * mm, summary_y, summary_text)
-            summary_y -= 13 * mm  # 次の行へ（A4一枚に収まるように間隔を詰める）
-            
-            # ページを超える場合は改ページ（A4一枚に収めるため、通常は発生しない）
-            if summary_y < 12 * mm:
-                c.showPage()
-                summary_y = self.A4_HEIGHT - 50 * mm
-                # タイトルを再描画
-                c.setFont(font_name, summary_title_font_size)
-                c.drawString(10 * mm, summary_y, summary_title)
-                summary_y -= 14 * mm
-                c.setFont(font_name, summary_data_font_size)
+            c.drawString(left_x, left_y, summary_text)
+            left_y -= row_height
+        
+        # 右列を描画
+        right_y = summary_y_base
+        for (item, spec), total in right_items:
+            unit_label = item_units.get((item, spec), '')
+            if spec:
+                display_name = f"{item}({spec})"
+            else:
+                display_name = item
+            summary_text = f"・{display_name}：{total}{unit_label}"
+            c.drawString(right_x, right_y, summary_text)
+            right_y -= row_height
     
     def _draw_text_in_quadrant(self, c: canvas.Canvas, text: str, font_name: str, 
                                max_font_size: int, quadrant_width: float, 
@@ -430,11 +442,13 @@ class LabelPDFGenerator:
         q4_center_y = y + q_height / 2  # Q4の中央Y座標
         c.drawString(q4_center_x - text_width / 2, q4_center_y - text_height / 2, quantity)
         
-        # 出荷日（左下の隅、小さく）
+        # 出荷日（ラベル水平中央、大きめの文字）
         shipment_date = label.get('shipment_date', '')
         if shipment_date:
-            c.setFont(font_name, 10)
-            c.drawString(x + 5, y + 5, shipment_date)
+            center_x = x + self.LABEL_WIDTH / 2
+            date_y = y + 12  # 下端から12pt上
+            c.setFont(font_name, 16)
+            c.drawCentredString(center_x, date_y, shipment_date)
     
     def _draw_fraction_label(self, c: canvas.Canvas, x: float, y: float, 
                             label: Dict, font_name: str):
@@ -517,11 +531,13 @@ class LabelPDFGenerator:
         q4_center_y = y + q_height / 2  # Q4の中央Y座標
         c.drawString(q4_center_x - text_width / 2, q4_center_y - text_height / 2, quantity)
         
-        # 出荷日（左下の隅、小さく）
+        # 出荷日（ラベル水平中央、大きめの文字）
         shipment_date = label.get('shipment_date', '')
         if shipment_date:
-            c.setFont(font_name, 10)
-            c.drawString(x + 5, y + 5, shipment_date)
+            center_x = x + self.LABEL_WIDTH / 2
+            date_y = y + 12  # 下端から12pt上
+            c.setFont(font_name, 16)
+            c.drawCentredString(center_x, date_y, shipment_date)
     
     def _draw_guide_lines(self, c: canvas.Canvas, x: float, y: float, 
                          col: int, row: int, label_idx: int, total_labels: int, is_last_label: bool = False):
