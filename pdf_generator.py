@@ -56,10 +56,21 @@ class LabelPDFGenerator:
     
     def _register_font(self):
         """IPAexGothicフォントを登録"""
+        self.bold_font_available = False
         try:
             if os.path.exists(self.font_path):
                 pdfmetrics.registerFont(TTFont('IPAGothic', self.font_path))
                 self.font_available = True
+                # 太字フォント（ipaexgb.ttf）があれば登録
+                bold_paths = [
+                    'ipaexgb.ttf', 'fonts/ipaexgb.ttf',
+                    'C:/Windows/Fonts/ipaexgb.ttf', '/usr/share/fonts/ipaexgb.ttf',
+                ]
+                for bp in bold_paths:
+                    if os.path.exists(bp):
+                        pdfmetrics.registerFont(TTFont('IPAGothic-Bold', bp))
+                        self.bold_font_available = True
+                        break
             else:
                 print(f"警告: フォントファイルが見つかりません: {self.font_path}")
                 self.font_available = False
@@ -70,6 +81,12 @@ class LabelPDFGenerator:
     def _get_font_name(self) -> str:
         """使用するフォント名を返す"""
         return 'IPAGothic' if self.font_available else 'Helvetica'
+    
+    def _get_font_name_bold(self) -> str:
+        """日付等に使う太字フォント名を返す"""
+        if self.bold_font_available:
+            return 'IPAGothic-Bold'
+        return 'Helvetica-Bold'  # ReportLab標準の太字
     
     def _rearrange_labels_for_cut_and_stack(self, labels: List[Dict]) -> List[Dict]:
         """
@@ -531,12 +548,13 @@ class LabelPDFGenerator:
         q4_center_y = y + q_height / 2  # Q4の中央Y座標
         c.drawString(q4_center_x - text_width / 2, q4_center_y - text_height / 2, quantity)
         
-        # 出荷日（ラベル水平中央、大きめの文字）
+        # 出荷日（ラベル最下段・水平中央、太字で視認性最大化）
         shipment_date = label.get('shipment_date', '')
         if shipment_date:
             center_x = x + self.LABEL_WIDTH / 2
-            date_y = y + 12  # 下端から12pt上
-            c.setFont(font_name, 16)
+            date_y = y + 5 * mm  # ラベル下端から5mm上にどっしり配置
+            date_font = self._get_font_name_bold()
+            c.setFont(date_font, 22)  # ラベルに合わせて拡大
             c.drawCentredString(center_x, date_y, shipment_date)
     
     def _draw_guide_lines(self, c: canvas.Canvas, x: float, y: float, 
