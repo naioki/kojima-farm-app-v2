@@ -353,7 +353,7 @@ def generate_labels_from_data(order_data: list, shipment_date: str) -> list:
     """
     labels = []
     dt = datetime.strptime(shipment_date, '%Y-%m-%d')
-    shipment_date_display = f"{dt.month}/{dt.day}"  # ゼロ埋めなし（例: 2/7）
+    shipment_date_display = f"{dt.month}月{dt.day}日"  # 口数「1/6」と区別するため漢字表記（例: 2月10日）
     
     for entry in order_data:
         store = entry.get('store', '')
@@ -476,11 +476,14 @@ def generate_summary_table(order_data: list) -> list:
         
         # 単位を判定
         unit_label = get_unit_label_for_item(item, spec)
+        # 品目表示名：荷姿(spec)があれば「品目 荷姿」で判別しやすくする（一覧表・総数で使用）
+        item_display = f"{item} {spec}".strip() if spec else item
         
         summary.append({
             'store': store,
             'item': item,
             'spec': spec,
+            'item_display': item_display,
             'boxes': boxes,
             'rem_box': rem_box,
             'total_packs': total_packs,
@@ -521,11 +524,8 @@ def generate_line_summary(order_data: list) -> str:
     sorted_items = sorted(summary_packs.items(), key=lambda x: (x[0][0], x[0][1]))
     for (item, spec), total in sorted_items:
         unit_label = get_unit_label_for_item(item, spec)
-        # 表示形式: 品目名(規格)：数量単位
-        if spec:
-            display_name = f"{item}({spec})"
-        else:
-            display_name = item
+        # 表示形式: 品目名 荷姿（一覧表と統一）
+        display_name = f"{item} {spec}".strip() if spec else item
         line_text += f"・{display_name}：{total}{unit_label}\n"
     
     return line_text

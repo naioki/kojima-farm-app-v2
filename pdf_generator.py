@@ -151,7 +151,7 @@ class LabelPDFGenerator:
         # 出荷日を表示用に変換（月/日、ゼロ埋めなし 例: 2/7）
         from datetime import datetime
         shipment_date_obj = datetime.strptime(shipment_date, '%Y-%m-%d')
-        shipment_date_display = f"{shipment_date_obj.month}/{shipment_date_obj.day}"
+        shipment_date_display = f"{shipment_date_obj.month}月{shipment_date_obj.day}日"  # 口数と区別するため漢字表記
         
         # 1ページ目：出荷一覧表
         self._draw_summary_page(c, summary_data, shipment_date_display, font_name)
@@ -255,16 +255,16 @@ class LabelPDFGenerator:
         header_row = ["店舗名", "品目", "フル箱", "端数箱", "総数"]
         table_data.append(header_row)
         
-        # データ行
+        # データ行（品目列は品目+荷姿の表示名を使用＝マスターで管理した判別しやすい名称）
         for entry in summary_data:
             store = str(entry.get('store', ''))
-            item = str(entry.get('item', ''))
+            item_display = str(entry.get('item_display', entry.get('item', '')))
             boxes = str(entry.get('boxes', 0))
             rem_box = str(entry.get('rem_box', 0))
             total_quantity = entry.get('total_quantity', 0)
             unit_label = entry.get('unit_label', '')
             total_display = f"{total_quantity}{unit_label}" if total_quantity > 0 and unit_label else str(total_quantity)
-            table_data.append([store, item, boxes, rem_box, total_display])
+            table_data.append([store, item_display, boxes, rem_box, total_display])
         
         # テーブルの列幅を設定（mm単位）- A4幅（210mm）に収まるように調整
         # 左右マージン10mmずつ = 20mm、テーブル幅は190mm以内に収める
@@ -358,14 +358,11 @@ class LabelPDFGenerator:
         left_items = sorted_items[:mid]
         right_items = sorted_items[mid:]
         
-        # 左列を描画
+        # 左列を描画（品目表示名＝品目+荷姿で統一）
         left_y = summary_y_base
         for (item, spec), total in left_items:
             unit_label = item_units.get((item, spec), '')
-            if spec:
-                display_name = f"{item}({spec})"
-            else:
-                display_name = item
+            display_name = f"{item} {spec}".strip() if spec else item
             summary_text = f"・{display_name}：{total}{unit_label}"
             c.drawString(left_x, left_y, summary_text)
             left_y -= row_height
@@ -374,10 +371,7 @@ class LabelPDFGenerator:
         right_y = summary_y_base
         for (item, spec), total in right_items:
             unit_label = item_units.get((item, spec), '')
-            if spec:
-                display_name = f"{item}({spec})"
-            else:
-                display_name = item
+            display_name = f"{item} {spec}".strip() if spec else item
             summary_text = f"・{display_name}：{total}{unit_label}"
             c.drawString(right_x, right_y, summary_text)
             right_y -= row_height
