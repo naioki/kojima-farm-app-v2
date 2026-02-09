@@ -26,6 +26,8 @@ from config_manager import (
 )
 from email_config_manager import load_email_config, save_email_config, detect_imap_server
 from email_reader import check_email_for_orders
+from delivery_converter import v2_result_to_delivery_rows
+from delivery_sheet_writer import append_delivery_rows, is_sheet_configured, DELIVERY_SHEET_COLUMNS
 
 # ページ設定
 st.set_page_config(
@@ -1067,7 +1069,47 @@ if st.session_state.parsed_data:
         st.session_state.parsed_data = updated_data
         st.info("✅ データを更新しました。入数マスターにも反映済み。PDFを生成する場合は下のボタンを押してください。")
     st.divider()
-    
+
+    # 納品データ形式（台帳用）プレビュー・CSV・シート追記
+    st.subheader("📋 納品データ形式（台帳用）")
+    st.caption("持込入力と同一形式に変換してプレビュー・CSV出力・スプレッドシート追記ができます。")
+    d_date = st.text_input("納品日付", value=st.session_state.get("shipment_date", (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")), key="delivery_date_input")
+    c_date = st.text_input("持込日付", value=d_date, key="carry_date_input")
+    farmer_name = st.text_input("農家", value="", placeholder="メール読み取りの場合は任意", key="farmer_input")
+    try:
+        delivery_rows = v2_result_to_delivery_rows(
+            st.session_state.parsed_data,
+            delivery_date=d_date,
+            carry_date=c_date or d_date,
+            farmer=farmer_name or "",
+        )
+    except Exception as e:
+        delivery_rows = []
+        st.warning(f"変換エラー: {e}")
+    if delivery_rows:
+        df_delivery = pd.DataFrame(delivery_rows)
+        st.dataframe(df_delivery, use_container_width=True, hide_index=True)
+        csv_bytes = df_delivery.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button("📥 納品データをCSVでダウンロード", data=csv_bytes, file_name=f"納品データ_{d_date.replace('/', '-')}.csv", mime="text/csv", key="csv_delivery_btn")
+        if is_sheet_configured(getattr(st, "secrets", None)):
+            st.caption("Google スプレッドシートに追記する場合: スプレッドシートIDを入力して「納品データシートに追記」を押してください。")
+            _sid = ""
+            if hasattr(st, "secrets") and hasattr(st.secrets, "get"):
+                _sid = st.secrets.get("DELIVERY_SPREADSHEET_ID", "") or getattr(st.secrets, "DELIVERY_SPREADSHEET_ID", "")
+            sheet_id = st.text_input("スプレッドシートID", value=_sid, placeholder="URLの /d/ と /edit の間の文字列", key="delivery_sheet_id")
+            if st.button("📤 納品データシートに追記", key="append_sheet_btn"):
+                if sheet_id and sheet_id.strip():
+                    ok, msg = append_delivery_rows(sheet_id.strip(), delivery_rows, st_secrets=getattr(st, "secrets", None))
+                    if ok:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("スプレッドシートIDを入力してください。")
+        else:
+            st.caption("💡 スプレッドシートへ追記するには .streamlit/secrets.toml に [gcp] のサービスアカウントを設定するか、GOOGLE_APPLICATION_CREDENTIALS を設定してください。")
+    st.divider()
+
     # ラベル生成
     if st.button("📋 ラベルを生成", type="primary", use_container_width=True, key="pdf_gen_tab1"):
         if st.session_state.parsed_data:
