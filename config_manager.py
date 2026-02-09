@@ -26,8 +26,6 @@ DEFAULT_ITEMS = {
     "春菊": ["春菊", "しゅんぎく", "シュンギク"]
 }
 
-# メールで「×数字」が総数ではなく箱数で送られてくる品目（箱数で登録）
-BOX_COUNT_ITEMS = ["胡瓜平箱"]
 
 def ensure_config_dir():
     """設定ディレクトリが存在することを確認"""
@@ -253,13 +251,13 @@ def initialize_default_units():
 # ==========================================
 
 DEFAULT_ITEM_SETTINGS = {
-    "胡瓜": {"default_unit": 30, "unit_type": "袋"},
-    "胡瓜平箱": {"default_unit": 30, "unit_type": "袋"},  # 1コンテナ30袋、注文の×数字は箱数
-    "胡瓜バラ": {"default_unit": 100, "unit_type": "本"},
-    "長ネギ": {"default_unit": 50, "unit_type": "本"},
-    "長ねぎバラ": {"default_unit": 50, "unit_type": "本"},
-    "春菊": {"default_unit": 30, "unit_type": "袋"},
-    "青梗菜": {"default_unit": 20, "unit_type": "袋"},
+    "胡瓜": {"default_unit": 30, "unit_type": "袋", "receive_as_boxes": False},
+    "胡瓜平箱": {"default_unit": 30, "unit_type": "袋", "receive_as_boxes": True},
+    "胡瓜バラ": {"default_unit": 100, "unit_type": "本", "receive_as_boxes": False},
+    "長ネギ": {"default_unit": 50, "unit_type": "本", "receive_as_boxes": False},
+    "長ねぎバラ": {"default_unit": 50, "unit_type": "本", "receive_as_boxes": False},
+    "春菊": {"default_unit": 30, "unit_type": "袋", "receive_as_boxes": False},
+    "青梗菜": {"default_unit": 20, "unit_type": "袋", "receive_as_boxes": False},
 }
 
 def load_item_settings() -> Dict[str, Dict[str, any]]:
@@ -276,7 +274,13 @@ def load_item_settings() -> Dict[str, Dict[str, any]]:
                     # 長ねぎ・長ねぎバラの設定を確実に50本に設定（複数の表記に対応）
                     for key in ["長ネギ", "長ねぎバラ", "長ネギバラ"]:
                         if key in merged:
-                            merged[key] = {"default_unit": 50, "unit_type": "本"}
+                            merged[key] = {**merged[key], "default_unit": 50, "unit_type": "本"}
+                    # 各設定にreceive_as_boxesを付与（無ければデフォルトから）
+                    for key in list(merged.keys()):
+                        merged[key] = {
+                            **merged[key],
+                            "receive_as_boxes": merged[key].get("receive_as_boxes", DEFAULT_ITEM_SETTINGS.get(key, {}).get("receive_as_boxes", False)),
+                        }
                     # マージした結果を保存（デフォルト値が確実に含まれる）
                     save_item_settings(merged)
                     return merged
@@ -302,19 +306,38 @@ def get_item_setting(item: str) -> Dict[str, any]:
     """品目の設定を取得（デフォルト値あり）"""
     settings = load_item_settings()
     if item in settings:
-        return settings[item]
-    # デフォルト値を返す
-    return {"default_unit": 0, "unit_type": "袋"}
+        s = settings[item].copy()
+        s.setdefault("receive_as_boxes", False)
+        return s
+    return {"default_unit": 0, "unit_type": "袋", "receive_as_boxes": False}
 
 
-def set_item_setting(item: str, default_unit: int, unit_type: str):
+def set_item_setting(item: str, default_unit: int, unit_type: str, receive_as_boxes: bool = None):
     """品目の設定を設定・更新"""
     settings = load_item_settings()
+    existing = settings.get(item, {})
     settings[item] = {
         "default_unit": default_unit,
-        "unit_type": unit_type
+        "unit_type": unit_type,
+        "receive_as_boxes": receive_as_boxes if receive_as_boxes is not None else existing.get("receive_as_boxes", False),
     }
     save_item_settings(settings)
+
+
+def set_item_receive_as_boxes(item: str, receive_as_boxes: bool):
+    """品目の「受信方法」のみ更新（総数/箱数）"""
+    settings = load_item_settings()
+    if item not in settings:
+        settings[item] = {"default_unit": 0, "unit_type": "袋", "receive_as_boxes": receive_as_boxes}
+    else:
+        settings[item]["receive_as_boxes"] = receive_as_boxes
+    save_item_settings(settings)
+
+
+def get_box_count_items() -> List[str]:
+    """「×数字」が箱数で送られてくる品目名のリストを返す"""
+    settings = load_item_settings()
+    return [name for name, s in settings.items() if s.get("receive_as_boxes", False)]
 
 
 def remove_item_setting(item: str):

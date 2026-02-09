@@ -21,8 +21,8 @@ from config_manager import (
     load_items, save_items, add_item_variant, add_new_item, remove_item,
     auto_learn_store, auto_learn_item,
     load_units, lookup_unit, add_unit_if_new, set_unit, initialize_default_units,
-    load_item_settings, save_item_settings, get_item_setting, set_item_setting, remove_item_setting,
-    DEFAULT_ITEM_SETTINGS, BOX_COUNT_ITEMS
+    load_item_settings, save_item_settings, get_item_setting, set_item_setting, set_item_receive_as_boxes, remove_item_setting,
+    DEFAULT_ITEM_SETTINGS, get_box_count_items
 )
 from email_config_manager import load_email_config, save_email_config, detect_imap_server
 from email_reader import check_email_for_orders
@@ -172,8 +172,13 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
     item_normalization = get_item_normalization()
     store_list = "、".join(known_stores)
     item_list = ", ".join(item_normalization.keys())
+    # マスターデータを参照（品目名管理で設定した入数・箱数/総数）
+    item_settings_for_prompt = load_item_settings()
+    box_count_items = get_box_count_items()
+    unit_lines = "\n".join([f"- {name}: {s.get('default_unit', 0)}{s.get('unit_type', '袋')}/コンテナ" for name, s in sorted(item_settings_for_prompt.items()) if s.get("default_unit", 0) > 0])
+    box_count_str = "、".join(box_count_items) if box_count_items else "（なし）"
     
-    # プロンプト（既存リポジトリを参考）
+    # プロンプト（マスターデータを参照して計算）
     prompt = f"""
 画像を解析し、以下の厳密なルールに従ってJSONで返してください。
 
@@ -192,29 +197,13 @@ def parse_order_image(image: Image.Image, api_key: str) -> list:
 4. 「胡瓜バラ」と「胡瓜3本」は別の規格として扱ってください
 5. unit, boxes, remainderには「数字のみ」を入れてください
 
-【計算ルール（事前登録の入数＝1コンテナあたりの入数）】
-メールで送られてくるのは基本的に「総数」です。以下の事前登録入数を参照して、総数から箱数・端数を逆算してください。
-- 胡瓜（袋）: 30袋/コンテナ → unit=30
-- 胡瓜平箱: 30袋/コンテナ → unit=30（※注：胡瓜平箱だけは×数字が「箱数」なので逆算しない）
-- 胡瓜バラ: 100本/コンテナ → unit=100
-- 長ねぎ: 50本/コンテナ → unit=50
-- 長ねぎバラ: 50本/コンテナ → unit=50
-- 春菊: 30袋/コンテナ → unit=30
-- 青梗菜: 20袋/コンテナ → unit=20
+【計算ルール（事前登録マスターデータ＝1コンテナあたりの入数）】
+メールで送られてくるのは基本的に「総数」です。以下の登録入数を参照して、総数から箱数・端数を逆算してください。
+{unit_lines}
 
 【最重要：総数 vs 箱数】
-- ほとんどの品目：「×数字」＝総数です。unitを上記で参照し、boxes = 総数÷unit（切り捨て）, remainder = 総数 - unit×boxes で逆算してください。
-- 例外・胡瓜平箱のみ：「×数字」＝箱数です。総数ではありません。胡瓜平箱×10 → boxes=10, unit=30, remainder=0 と出力してください（箱数10をそのままboxesに）。
-
-【数量計算の例（総数の場合：事前登録入数で逆算）】
-- 「胡瓜3本×180」→ 総数180 → unit=30, boxes=6, remainder=0
-- 「胡瓜（袋）×100」→ 総数100 → unit=30, boxes=3, remainder=10
-- 「胡瓜バラ×700」→ 総数700本 → unit=100, boxes=7, remainder=0
-- 「長ねぎ×150」→ 総数150本 → unit=50, boxes=3, remainder=0
-- 「春菊×50」→ 総数50袋 → unit=30, boxes=1, remainder=20
-- 「青梗菜×40」→ 総数40袋 → unit=20, boxes=2, remainder=0
-【胡瓜平箱のみ（×数字＝箱数）】
-- 「胡瓜平箱×10」→ 箱数10 → boxes=10, unit=30, remainder=0（総数300だが入力は箱数なのでboxes=10）
+- 「×数字」が総数の品目：boxes = 総数÷unit（切り捨て）, remainder = 総数 - unit×boxes で逆算してください。
+- 「×数字」が箱数の品目（以下のみ）：{box_count_str} → ×数字をそのままboxesにし、unitは上記の値、remainder=0 で出力してください。
 
 【出力JSON形式】
 [{{"store":"店舗名","item":"品目名","spec":"規格","unit":数字,"boxes":数字,"remainder":数字}}]
@@ -833,18 +822,44 @@ with tab3:
     items = load_items()
     item_settings = load_item_settings()
     
-    # 登録済みマスターデータ一覧（入数・単位の確認用）
-    st.write("**📋 登録済みマスターデータ（入数・単位）**")
-    st.caption("メールで送られてくる総数は、この入数を使って箱数・端数に逆算します。胡瓜平箱のみ「×数字」が箱数です。")
+    # 登録済みマスターデータ（確認・編集可能、箱数/総数切り替え）
+    st.write("**📋 マスターデータ（入数・単位・受信方法）**")
+    st.caption("メールの「×数字」は通常は総数です。この入数で箱数・端数を逆算します。「受信方法」を箱数にした品目は、×数字をそのまま箱数として扱います。編集して「マスターデータを保存」を押してください。")
+    box_count_items = get_box_count_items()
     if item_settings:
         master_rows = []
         for name, setting in sorted(item_settings.items()):
             u = setting.get("default_unit", 0)
             t = setting.get("unit_type", "袋")
-            note = "※箱数で受信" if name in BOX_COUNT_ITEMS else ""
-            master_rows.append({"品目": name, "1コンテナあたりの入数": f"{u}{t}", "備考": note})
+            as_boxes = setting.get("receive_as_boxes", False)
+            master_rows.append({
+                "品目": name,
+                "1コンテナあたりの入数": u,
+                "単位": t,
+                "受信方法": "箱数" if as_boxes else "総数",
+            })
         if master_rows:
-            st.dataframe(pd.DataFrame(master_rows), use_container_width=True, hide_index=True)
+            df_master = pd.DataFrame(master_rows)
+            edited_master = st.data_editor(
+                df_master,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "品目": st.column_config.TextColumn("品目", disabled=True),
+                    "1コンテナあたりの入数": st.column_config.NumberColumn("1コンテナあたりの入数", min_value=1, step=1),
+                    "単位": st.column_config.SelectboxColumn("単位", options=["袋", "本"], required=True),
+                    "受信方法": st.column_config.SelectboxColumn("受信方法", options=["総数", "箱数"], required=True),
+                },
+            )
+            if st.button("💾 マスターデータを保存", key="save_master_btn", type="primary"):
+                for _, row in edited_master.iterrows():
+                    name = str(row["品目"]).strip()
+                    u = int(row["1コンテナあたりの入数"]) if row["1コンテナあたりの入数"] > 0 else 30
+                    t = str(row["単位"]).strip() or "袋"
+                    as_boxes = str(row["受信方法"]).strip() == "箱数"
+                    set_item_setting(name, u, t, receive_as_boxes=as_boxes)
+                st.success("✅ マスターデータを保存しました。解析時にこの設定が参照されます。")
+                st.rerun()
     st.divider()
     
     # 新しい品目を追加（入数・単位を縦並びで確実に表示）
@@ -882,12 +897,15 @@ with tab3:
             setting = get_item_setting(normalized)
             default_unit = setting.get("default_unit", 0)
             unit_type = setting.get("unit_type", "袋")
+            receive_as_boxes = setting.get("receive_as_boxes", False)
             
             # 設定情報を表示（エクスパンダー題でそのまま表示されるようプレーン文字列）
             if default_unit > 0:
                 setting_info = f"入数: {default_unit}{unit_type}/コンテナ"
             else:
                 setting_info = "入数: 未設定"
+            if receive_as_boxes:
+                setting_info += "・箱数で受信"
             
             # バリアント表示を短縮（長すぎる場合）
             variants_display = ', '.join(variants[:3])
@@ -918,9 +936,9 @@ with tab3:
                 
                 st.divider()
                 
-                # 入数・単位の設定
-                st.write("**1コンテナあたりの入数と単位の設定**")
-                col1, col2, col3 = st.columns([2, 1, 1])
+                # 入数・単位・受信方法の設定
+                st.write("**1コンテナあたりの入数・単位・受信方法の設定**")
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                 with col1:
                     edit_unit = st.number_input(
                         "1コンテナあたりの入数",
@@ -937,9 +955,17 @@ with tab3:
                         key=f"edit_unit_type_{normalized}"
                     )
                 with col3:
+                    edit_receive = st.selectbox(
+                        "受信方法",
+                        ["総数", "箱数"],
+                        index=1 if receive_as_boxes else 0,
+                        key=f"edit_receive_{normalized}",
+                        help="メールの×数字が総数か箱数か"
+                    )
+                with col4:
                     if st.button("保存", key=f"save_setting_{normalized}", use_container_width=True):
-                        set_item_setting(normalized, int(edit_unit), edit_unit_type)
-                        st.success(f"✅ 「{normalized}」の設定を保存しました（{edit_unit}{edit_unit_type}/コンテナ）")
+                        set_item_setting(normalized, int(edit_unit), edit_unit_type, receive_as_boxes=(edit_receive == "箱数"))
+                        st.success(f"✅ 「{normalized}」の設定を保存しました")
                         st.rerun()
                 
                 st.divider()
